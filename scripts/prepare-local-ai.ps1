@@ -5,11 +5,12 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $localAiRoot = Join-Path $repoRoot 'resources\local-ai'
 $modelDir = Join-Path $localAiRoot 'models'
 $runtimeDir = Join-Path $localAiRoot 'runtime'
+$licenseDir = Join-Path $localAiRoot 'licenses'
 $modelFile = Join-Path $modelDir 'MiniCPM5-1B-Q4_K_M.gguf'
 $modelUrl = 'https://huggingface.co/openbmb/MiniCPM5-1B-GGUF/resolve/main/MiniCPM5-1B-Q4_K_M.gguf?download=true'
 $modelSha256 = '81B64D05A23B17B34C475F42B3E72FBDE62D4B92CC34541F7A8031D0752DEAFA'
 
-New-Item -ItemType Directory -Force -Path $modelDir, $runtimeDir | Out-Null
+New-Item -ItemType Directory -Force -Path $modelDir, $runtimeDir, $licenseDir | Out-Null
 
 function Test-ExpectedHash([string]$Path, [string]$Expected) {
     if (-not (Test-Path -LiteralPath $Path)) { return $false }
@@ -92,6 +93,22 @@ if (-not $haveRuntime) {
 
 if (-not ((Test-Path (Join-Path $runtimeDir 'llama-server.exe')) -or (Test-Path (Join-Path $runtimeDir 'llama.exe')))) {
     throw 'llama.cpp runtime preparation failed.'
+}
+
+# The packaged build redistributes both projects, so retain their upstream
+# license notices beside the bundled model/runtime.
+$licenseDownloads = @(
+    @{
+        Uri = 'https://raw.githubusercontent.com/OpenBMB/MiniCPM/main/LICENSE'
+        OutFile = (Join-Path $licenseDir 'MiniCPM-APACHE-2.0.txt')
+    },
+    @{
+        Uri = 'https://raw.githubusercontent.com/ggml-org/llama.cpp/master/LICENSE'
+        OutFile = (Join-Path $licenseDir 'llama.cpp-MIT.txt')
+    }
+)
+foreach ($license in $licenseDownloads) {
+    Invoke-WebRequest -Uri $license.Uri -OutFile $license.OutFile -UseBasicParsing
 }
 
 Write-Host 'Local AI assets are ready.'
