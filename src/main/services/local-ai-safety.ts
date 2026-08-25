@@ -1,5 +1,5 @@
 import { app, BrowserWindow } from 'electron'
-import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
+import { spawn, type ChildProcess } from 'child_process'
 import { createHash } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { createServer } from 'net'
@@ -19,7 +19,7 @@ const MODEL_FILE = 'MiniCPM5-1B-Q4_K_M.gguf'
 const IDLE_UNLOAD_MS = 60_000
 const SERVER_START_TIMEOUT_MS = 30_000
 const REQUEST_TIMEOUT_MS = 30_000
-const CACHE_VERSION = 1
+const CACHE_VERSION = 2
 
 type SafetyKind = 'startup' | 'program'
 
@@ -88,8 +88,10 @@ function heuristicStartup(item: StartupItem): StartupSafetyRating {
     reasons.push('startup target appears to be missing')
   }
   if (/microsoft|windows defender|nvidia|intel|amd|google|mozilla|valve|discord|spotify/.test(text)) {
-    score = Math.max(score, 8)
-    reasons.push('recognised publisher/application metadata')
+    // Upstream derives some publisher names from paths/commands. Treat this as
+    // a weak hint, never as proof of a valid code signature.
+    score = Math.max(score, 7)
+    reasons.push('recognised application/publisher hint')
   }
   if (/\\temp\\|\\downloads\\|appdata\\local\\temp|powershell|wscript|cscript|mshta/.test(text)) {
     score = Math.min(score, 4)
@@ -97,7 +99,7 @@ function heuristicStartup(item: StartupItem): StartupSafetyRating {
   }
   if (!item.publisher || item.publisher === 'Unknown') {
     score = Math.min(score, 6)
-    reasons.push('publisher is unknown')
+    reasons.push('publisher hint is unknown')
   }
 
   return {
@@ -116,12 +118,12 @@ function heuristicProgram(program: InstalledProgram): StartupSafetyRating {
   const reasons: string[] = []
 
   if (/microsoft|nvidia|intel|amd|google|mozilla|valve|discord|spotify|adobe|github/.test(text)) {
-    score = 8
-    reasons.push('recognised publisher/application metadata')
+    score = 7
+    reasons.push('recognised application/publisher hint')
   }
   if (!program.publisher || program.publisher === 'Unknown') {
     score = Math.min(score, 6)
-    reasons.push('publisher is unknown')
+    reasons.push('publisher hint is unknown')
   }
   if (/\\temp\\|\\downloads\\/.test(program.installLocation.toLowerCase())) {
     score = Math.min(score, 4)
@@ -141,13 +143,13 @@ function heuristicProgram(program: InstalledProgram): StartupSafetyRating {
 function runtimeDir(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'local-ai', 'runtime')
-    : join(__dirname, '../../../resources/local-ai/runtime')
+    : join(app.getAppPath(), 'resources', 'local-ai', 'runtime')
 }
 
 function modelPath(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'local-ai', 'models', MODEL_FILE)
-    : join(__dirname, '../../../resources/local-ai/models', MODEL_FILE)
+    : join(app.getAppPath(), 'resources', 'local-ai', 'models', MODEL_FILE)
 }
 
 function findServerExecutable(): { exe: string; argsPrefix: string[] } | null {
@@ -178,16 +180,24 @@ async function freeLoopbackPort(): Promise<number> {
 }
 
 class LocalAiSafetyService {
-  private cache = loadCache()
+  // Do not touch app.getPath() at module import time: Electron may import this
+  // module before app.whenReady(). Load the cache on the first actual analysis.
+  private cacheData: CacheFile | null = null
   private queued = new Set<string>()
   private queue: PendingAnalysis[] = []
   private workerRunning = false
-  private server: ChildProcessWithoutNullStreams | null = null
+  private server: ChildProcess | null = null
   private serverPort = 0
   private idleTimer: ReturnType<typeof setTimeout> | null = null
   private unavailableReason: string | null = null
 
+  private getCache(): CacheFile {
+    if (!this.cacheData) this.cacheData = loadCache()
+    return this.cacheData
+  }
+
   async getStartupSafetyRatings(): Promise<StartupSafetyResult> {
+    const cache = this.getCache()
     const items = await listStartupItems()
     const ratings: StartupSafetyRating[] = []
     let pending = 0
@@ -196,7 +206,7 @@ class LocalAiSafetyService {
       const metadata = {
         name: item.name,
         displayName: item.displayName,
-        publisher: item.publisher,
+        publisherHint: item.publisher,
         command: item.command,
         source: item.source,
         enabled: item.enabled,
@@ -204,7 +214,7 @@ class LocalAiSafetyService {
         stale: !!item.stale,
       }
       const key = stableKey('startup', metadata)
-      const cached = this.cache.ratings[key]
+      const cached = cache.ratings[key]
       if (cached) {
         ratings.push(cached)
         continue
@@ -222,6 +232,7 @@ class LocalAiSafetyService {
   }
 
   async getInstalledProgramSafetyRatings(): Promise<StartupSafetyResult> {
+    const cache = this.getCache()
     const programs = await getInstalledProgramsFull()
     const ratings: StartupSafetyRating[] = []
     let pending = 0
@@ -229,7 +240,7 @@ class LocalAiSafetyService {
     for (const program of programs) {
       const metadata = {
         name: program.displayName,
-        publisher: program.publisher,
+        publisherHint: program.publisher,
         version: program.displayVersion,
         installLocation: program.installLocation,
         installDate: program.installDate,
@@ -237,7 +248,7 @@ class LocalAiSafetyService {
         windowsInstaller: program.isWindowsInstaller,
       }
       const key = stableKey('program', metadata)
-      const cached = this.cache.ratings[key]
+      const cached = cache.ratings[key]
       if (cached) {
         ratings.push(cached)
         continue
@@ -257,11 +268,12 @@ class LocalAiSafetyService {
   stop(): void {
     this.queue = []
     this.queued.clear()
+    this.unavailableReason = null
     this.stopServer()
   }
 
   private enqueue(item: PendingAnalysis): void {
-    if (this.queued.has(item.key) || this.cache.ratings[item.key]) return
+    if (this.queued.has(item.key) || this.getCache().ratings[item.key]) return
     this.queued.add(item.key)
     this.queue.push(item)
     if (!this.workerRunning) void this.runWorker()
@@ -274,8 +286,9 @@ class LocalAiSafetyService {
         const item = this.queue.shift()!
         try {
           const refined = await this.refine(item)
-          this.cache.ratings[item.key] = refined
-          saveCache(this.cache)
+          const cache = this.getCache()
+          cache.ratings[item.key] = refined
+          saveCache(cache)
           this.pushUpdate(item.kind)
         } catch (err) {
           logError(`Local AI: analysis failed for ${item.name}`, err)
@@ -301,6 +314,7 @@ class LocalAiSafetyService {
     const prompt = [
       'You are a local software safety classifier inside a system utility.',
       'Assess ONLY the supplied metadata. Do not claim malware unless the metadata supports it.',
+      'The publisherHint field is unverified registry/path metadata, NOT a verified code signature.',
       'Score 1-10 where 10 is highly trustworthy/safe and 1 is strongly suspicious.',
       'Unknown/insufficient evidence should usually score 5-6.',
       'Return ONLY compact JSON with integer safetyScore and a description under 240 characters.',
@@ -323,7 +337,18 @@ class LocalAiSafetyService {
             { role: 'system', content: 'Return JSON only. Never include markdown.' },
             { role: 'user', content: prompt },
           ],
-          response_format: { type: 'json_object' },
+          response_format: {
+            type: 'json_object',
+            schema: {
+              type: 'object',
+              properties: {
+                safetyScore: { type: 'integer', minimum: 1, maximum: 10 },
+                description: { type: 'string', minLength: 1, maxLength: 240 },
+              },
+              required: ['safetyScore', 'description'],
+              additionalProperties: false,
+            },
+          },
         }),
       })
       if (!response.ok) throw new Error(`llama.cpp returned HTTP ${response.status}`)
@@ -336,7 +361,7 @@ class LocalAiSafetyService {
         ? clampScore(parsed.safetyScore)
         : item.fallback.safetyScore
       const description = typeof parsed.description === 'string' && parsed.description.trim()
-        ? parsed.description.trim().slice(0, 500)
+        ? parsed.description.trim().slice(0, 240)
         : item.fallback.description
 
       return {
@@ -366,6 +391,7 @@ class LocalAiSafetyService {
     const args = [
       ...runtime.argsPrefix,
       '-m', model,
+      '--alias', 'local-safety',
       '--host', '127.0.0.1',
       '--port', String(port),
       '-c', '4096',
@@ -378,10 +404,10 @@ class LocalAiSafetyService {
       cwd: runtimeDir(),
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
-    }) as ChildProcessWithoutNullStreams
+    })
     this.serverPort = port
 
-    this.server.stderr.on('data', (chunk) => {
+    this.server.stderr?.on('data', (chunk) => {
       const text = String(chunk).trim()
       if (text) logInfo(`Local AI: ${text.slice(0, 400)}`)
     })
