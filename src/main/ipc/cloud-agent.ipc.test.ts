@@ -1,6 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-
-// ── Mocks ────────────────────────────────────────────────────
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const handleMap = new Map<string, (...args: unknown[]) => unknown>()
 
@@ -24,6 +22,15 @@ vi.mock('../../shared/channels', () => ({
 
 vi.mock('../services/cloud-agent', () => ({
   cloudAgent: {
+    start: vi.fn(),
+    stop: vi.fn(),
+    unlink: vi.fn().mockResolvedValue(undefined),
+  },
+}))
+
+vi.mock('../services/local-cloud-service', () => ({
+  localCloud: {
+    start: vi.fn().mockResolvedValue(undefined),
     link: vi.fn(),
     unlink: vi.fn(),
     getStatus: vi.fn(),
@@ -38,10 +45,11 @@ vi.mock('../services/threat-monitor', () => ({
 }))
 
 import { registerCloudAgentIpc } from './cloud-agent.ipc'
-import { cloudAgent } from '../services/cloud-agent'
+import { localCloud } from '../services/local-cloud-service'
 import { threatMonitor } from '../services/threat-monitor'
 
-const mockCloudAgent = cloudAgent as unknown as {
+const mockLocalCloud = localCloud as unknown as {
+  start: ReturnType<typeof vi.fn>
   link: ReturnType<typeof vi.fn>
   unlink: ReturnType<typeof vi.fn>
   getStatus: ReturnType<typeof vi.fn>
@@ -52,233 +60,67 @@ const mockThreatMonitor = threatMonitor as unknown as {
   getThreatSnapshot: ReturnType<typeof vi.fn>
 }
 
-// ── Helpers ──────────────────────────────────────────────────
-
 function invoke(channel: string, ...args: unknown[]) {
   const handler = handleMap.get(channel)
   if (!handler) throw new Error(`No handler registered for ${channel}`)
-  return handler({} /* _event */, ...args)
+  return handler({}, ...args)
 }
 
-// ── Tests ────────────────────────────────────────────────────
-
-describe('cloud-agent IPC', () => {
+describe('local security IPC', () => {
   beforeEach(() => {
     handleMap.clear()
     vi.clearAllMocks()
   })
 
-  it('registers all five IPC handlers', () => {
+  it('registers all local security handlers', () => {
     registerCloudAgentIpc()
     expect(handleMap.has('cloud:link')).toBe(true)
     expect(handleMap.has('cloud:unlink')).toBe(true)
     expect(handleMap.has('cloud:get-status')).toBe(true)
     expect(handleMap.has('cloud:reconnect')).toBe(true)
     expect(handleMap.has('threat-monitor:get-snapshot')).toBe(true)
+    expect(mockLocalCloud.start).toHaveBeenCalled()
   })
 
-  // ── CLOUD_LINK ─────────────────────────────────────────────
+  it('does not require or forward an API key', async () => {
+    mockLocalCloud.link.mockResolvedValue({ success: true })
+    registerCloudAgentIpc()
 
-  describe('CLOUD_LINK', () => {
-    it('delegates to cloudAgent.link with a valid API key', async () => {
-      const expected = { success: true }
-      mockCloudAgent.link.mockResolvedValue(expected)
+    const result = await invoke('cloud:link', 'legacy-key-is-ignored')
 
-      registerCloudAgentIpc()
-      const result = await invoke('cloud:link', 'valid-api-key-1234')
-
-      expect(result).toEqual(expected)
-      expect(mockCloudAgent.link).toHaveBeenCalledWith('valid-api-key-1234')
-    })
-
-    it('accepts API key at minimum length (10 chars)', async () => {
-      mockCloudAgent.link.mockResolvedValue({ success: true })
-
-      registerCloudAgentIpc()
-      const result = await invoke('cloud:link', '1234567890')
-
-      expect(result).toEqual({ success: true })
-      expect(mockCloudAgent.link).toHaveBeenCalledWith('1234567890')
-    })
-
-    it('accepts API key at maximum length (200 chars)', async () => {
-      mockCloudAgent.link.mockResolvedValue({ success: true })
-      const key = 'a'.repeat(200)
-
-      registerCloudAgentIpc()
-      const result = await invoke('cloud:link', key)
-
-      expect(result).toEqual({ success: true })
-      expect(mockCloudAgent.link).toHaveBeenCalledWith(key)
-    })
-
-    it('rejects API key shorter than 10 characters', async () => {
-      registerCloudAgentIpc()
-      const result = await invoke('cloud:link', 'short')
-
-      expect(result).toEqual({ success: false, error: 'Invalid API key' })
-      expect(mockCloudAgent.link).not.toHaveBeenCalled()
-    })
-
-    it('rejects API key longer than 200 characters', async () => {
-      registerCloudAgentIpc()
-      const result = await invoke('cloud:link', 'a'.repeat(201))
-
-      expect(result).toEqual({ success: false, error: 'Invalid API key' })
-      expect(mockCloudAgent.link).not.toHaveBeenCalled()
-    })
-
-    it('rejects non-string API key (number)', async () => {
-      registerCloudAgentIpc()
-      const result = await invoke('cloud:link', 12345678901)
-
-      expect(result).toEqual({ success: false, error: 'Invalid API key' })
-      expect(mockCloudAgent.link).not.toHaveBeenCalled()
-    })
-
-    it('rejects null API key', async () => {
-      registerCloudAgentIpc()
-      const result = await invoke('cloud:link', null)
-
-      expect(result).toEqual({ success: false, error: 'Invalid API key' })
-      expect(mockCloudAgent.link).not.toHaveBeenCalled()
-    })
-
-    it('rejects undefined API key', async () => {
-      registerCloudAgentIpc()
-      const result = await invoke('cloud:link', undefined)
-
-      expect(result).toEqual({ success: false, error: 'Invalid API key' })
-      expect(mockCloudAgent.link).not.toHaveBeenCalled()
-    })
-
-    it('rejects empty string API key', async () => {
-      registerCloudAgentIpc()
-      const result = await invoke('cloud:link', '')
-
-      expect(result).toEqual({ success: false, error: 'Invalid API key' })
-      expect(mockCloudAgent.link).not.toHaveBeenCalled()
-    })
-
-    it('rejects object API key', async () => {
-      registerCloudAgentIpc()
-      const result = await invoke('cloud:link', { key: 'value' })
-
-      expect(result).toEqual({ success: false, error: 'Invalid API key' })
-      expect(mockCloudAgent.link).not.toHaveBeenCalled()
-    })
-
-    it('propagates errors from cloudAgent.link', async () => {
-      mockCloudAgent.link.mockRejectedValue(new Error('connection refused'))
-
-      registerCloudAgentIpc()
-      await expect(invoke('cloud:link', 'valid-api-key-1234')).rejects.toThrow('connection refused')
-    })
+    expect(result).toEqual({ success: true })
+    expect(mockLocalCloud.link).toHaveBeenCalledWith()
   })
 
-  // ── CLOUD_UNLINK ───────────────────────────────────────────
+  it('delegates status to the local service', () => {
+    const expected = { status: 'connected', maskedApiKey: null }
+    mockLocalCloud.getStatus.mockReturnValue(expected)
+    registerCloudAgentIpc()
 
-  describe('CLOUD_UNLINK', () => {
-    it('delegates to cloudAgent.unlink', async () => {
-      const expected = { success: true }
-      mockCloudAgent.unlink.mockResolvedValue(expected)
-
-      registerCloudAgentIpc()
-      const result = await invoke('cloud:unlink')
-
-      expect(result).toEqual(expected)
-      expect(mockCloudAgent.unlink).toHaveBeenCalledOnce()
-    })
-
-    it('propagates errors from cloudAgent.unlink', async () => {
-      mockCloudAgent.unlink.mockRejectedValue(new Error('unlink failed'))
-
-      registerCloudAgentIpc()
-      await expect(invoke('cloud:unlink')).rejects.toThrow('unlink failed')
-    })
+    expect(invoke('cloud:get-status')).toEqual(expected)
+    expect(mockLocalCloud.getStatus).toHaveBeenCalledOnce()
   })
 
-  // ── CLOUD_GET_STATUS ───────────────────────────────────────
+  it('delegates refresh to the local service', async () => {
+    mockLocalCloud.reconnect.mockResolvedValue(undefined)
+    registerCloudAgentIpc()
 
-  describe('CLOUD_GET_STATUS', () => {
-    it('delegates to cloudAgent.getStatus', () => {
-      const expected = { linked: true, connected: true }
-      mockCloudAgent.getStatus.mockReturnValue(expected)
-
-      registerCloudAgentIpc()
-      const result = invoke('cloud:get-status')
-
-      expect(result).toEqual(expected)
-      expect(mockCloudAgent.getStatus).toHaveBeenCalledOnce()
-    })
-
-    it('returns status synchronously (not async)', () => {
-      mockCloudAgent.getStatus.mockReturnValue({ linked: false, connected: false })
-
-      registerCloudAgentIpc()
-      const result = invoke('cloud:get-status')
-
-      // Should not be a promise
-      expect(result).toEqual({ linked: false, connected: false })
-    })
+    await invoke('cloud:reconnect')
+    expect(mockLocalCloud.reconnect).toHaveBeenCalledOnce()
   })
 
-  // ── CLOUD_RECONNECT ────────────────────────────────────────
+  it('keeps threat snapshot retrieval local', () => {
+    const snapshot = {
+      flaggedConnections: [],
+      flaggedDns: [],
+      blacklistVersion: 'spamhaus-drop-test',
+      lastConnectionScanAt: null,
+      lastDnsScanAt: null,
+    }
+    mockThreatMonitor.getThreatSnapshot.mockReturnValue(snapshot)
+    registerCloudAgentIpc()
 
-  describe('CLOUD_RECONNECT', () => {
-    it('delegates to cloudAgent.reconnect', async () => {
-      const expected = { success: true }
-      mockCloudAgent.reconnect.mockResolvedValue(expected)
-
-      registerCloudAgentIpc()
-      const result = await invoke('cloud:reconnect')
-
-      expect(result).toEqual(expected)
-      expect(mockCloudAgent.reconnect).toHaveBeenCalledOnce()
-    })
-
-    it('propagates errors from cloudAgent.reconnect', async () => {
-      mockCloudAgent.reconnect.mockRejectedValue(new Error('reconnect failed'))
-
-      registerCloudAgentIpc()
-      await expect(invoke('cloud:reconnect')).rejects.toThrow('reconnect failed')
-    })
-  })
-
-  // ── THREAT_MONITOR_GET_SNAPSHOT ────────────────────────────
-
-  describe('THREAT_MONITOR_GET_SNAPSHOT', () => {
-    it('delegates to threatMonitor.getThreatSnapshot', () => {
-      const snapshot = {
-        flaggedConnections: [],
-        flaggedDns: [],
-        blacklistVersion: '2025-01-01',
-        lastConnectionScanAt: '2025-01-01T12:00:00Z',
-        lastDnsScanAt: '2025-01-01T12:00:00Z',
-      }
-      mockThreatMonitor.getThreatSnapshot.mockReturnValue(snapshot)
-
-      registerCloudAgentIpc()
-      const result = invoke('threat-monitor:get-snapshot')
-
-      expect(result).toEqual(snapshot)
-      expect(mockThreatMonitor.getThreatSnapshot).toHaveBeenCalledOnce()
-    })
-
-    it('returns null values in snapshot', () => {
-      const snapshot = {
-        flaggedConnections: [],
-        flaggedDns: [],
-        blacklistVersion: null,
-        lastConnectionScanAt: null,
-        lastDnsScanAt: null,
-      }
-      mockThreatMonitor.getThreatSnapshot.mockReturnValue(snapshot)
-
-      registerCloudAgentIpc()
-      const result = invoke('threat-monitor:get-snapshot')
-
-      expect(result).toEqual(snapshot)
-    })
+    expect(invoke('threat-monitor:get-snapshot')).toEqual(snapshot)
+    expect(mockThreatMonitor.getThreatSnapshot).toHaveBeenCalledOnce()
   })
 })
