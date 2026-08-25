@@ -91,7 +91,9 @@ class LocalCloudService {
   async reconnect(): Promise<void> {
     this.stop()
     await this.start()
-    await refreshLocalThreatFeed(true)
+    if (getSettings().cloud.shareThreatMonitor !== false) {
+      await refreshLocalThreatFeed(true)
+    }
   }
 
   getStartupSafetyRatings(): Promise<StartupSafetyResult> {
