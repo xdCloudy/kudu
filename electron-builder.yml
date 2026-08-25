@@ -92,4 +92,6 @@ deb:
 
 publish:
   provider: github
+  owner: xdCloudy
+  repo: kudu
   releaseType: release
