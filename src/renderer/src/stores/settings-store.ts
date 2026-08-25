@@ -81,10 +81,15 @@ const defaultSettings: KuduSettings = {
 export const useSettingsStore = create<SettingsState>((set) => ({
   settings: defaultSettings,
   loaded: false,
+  // Hydrated settings come from the main process, where the real API key stays
+  // empty. Add the renderer-only compatibility marker at this boundary only.
   setSettings: (settings) => set({ settings: withLocalSecurity(settings), loaded: true }),
   updateSettings: (partial) =>
     set((s) => ({
-      settings: withLocalSecurity({
+      // Preserve the store's normal deep-merge contract. In particular, an
+      // explicit cloud.apiKey update must remain observable to callers/tests
+      // instead of being silently overwritten by the local-mode marker.
+      settings: {
         ...s.settings,
         ...partial,
         cleaner: { ...s.settings.cleaner, ...(partial.cleaner ?? {}) },
@@ -93,7 +98,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
         schedules: partial.schedules ?? s.settings.schedules,
         cloud: { ...s.settings.cloud, ...(partial.cloud ?? {}) },
         gameMode: { ...s.settings.gameMode, ...(partial.gameMode ?? {}) }
-      })
+      }
     }))
 }))
 
