@@ -6,9 +6,13 @@ $localAiRoot = Join-Path $repoRoot 'resources\local-ai'
 $modelDir = Join-Path $localAiRoot 'models'
 $runtimeDir = Join-Path $localAiRoot 'runtime'
 $licenseDir = Join-Path $localAiRoot 'licenses'
+
 $modelFile = Join-Path $modelDir 'MiniCPM5-1B-Q4_K_M.gguf'
 $modelUrl = 'https://huggingface.co/openbmb/MiniCPM5-1B-GGUF/resolve/main/MiniCPM5-1B-Q4_K_M.gguf?download=true'
 $modelSha256 = '81B64D05A23B17B34C475F42B3E72FBDE62D4B92CC34541F7A8031D0752DEAFA'
+
+$llamaRuntimeUrl = 'https://github.com/ggml-org/llama.cpp/releases/download/b10621/llama-b10621-bin-win-cpu-x64.zip'
+$llamaRuntimeSha256 = '0E8B65E650E369F70F8307D890508886F171EF4FB00FACCCDDD4A1B7FFDACA51'
 
 New-Item -ItemType Directory -Force -Path $modelDir, $runtimeDir, $licenseDir | Out-Null
 
@@ -48,28 +52,18 @@ foreach ($candidate in $serverCandidates) {
 }
 
 if (-not $haveRuntime) {
-    Write-Host 'Downloading latest official llama.cpp Windows CPU runtime...'
-    $headers = @{ 'User-Agent' = 'Kudu-Local-Build' }
-    $releases = Invoke-RestMethod -Headers $headers -Uri 'https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=10'
-
-    $asset = $null
-    foreach ($release in $releases) {
-        $asset = $release.assets | Where-Object {
-            $_.name -match '^llama-.*-bin-win-cpu-x64\.zip$'
-        } | Select-Object -First 1
-        if ($asset) { break }
-    }
-    if (-not $asset) {
-        throw 'Could not find an official llama.cpp win-cpu-x64 release asset.'
-    }
-
+    Write-Host 'Downloading pinned llama.cpp b10621 Windows CPU runtime (~18 MB)...'
     $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("kudu-llama-" + [Guid]::NewGuid().ToString('N'))
     $zip = Join-Path $tempRoot 'llama.zip'
     $extract = Join-Path $tempRoot 'extract'
     New-Item -ItemType Directory -Force -Path $tempRoot, $extract | Out-Null
 
     try {
-        Invoke-WebRequest -Headers $headers -Uri $asset.browser_download_url -OutFile $zip -UseBasicParsing
+        Invoke-WebRequest -Uri $llamaRuntimeUrl -OutFile $zip -UseBasicParsing
+        if (-not (Test-ExpectedHash $zip $llamaRuntimeSha256)) {
+            throw 'llama.cpp runtime SHA256 verification failed.'
+        }
+
         Expand-Archive -LiteralPath $zip -DestinationPath $extract -Force
 
         $server = Get-ChildItem -LiteralPath $extract -Recurse -File -Filter 'llama-server.exe' | Select-Object -First 1
