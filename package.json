@@ -41,11 +41,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/adventdevinc/kudu.git"
+    "url": "https://github.com/xdCloudy/kudu.git"
   },
-  "homepage": "https://usekudu.com",
+  "homepage": "https://github.com/xdCloudy/kudu",
   "bugs": {
-    "url": "https://github.com/adventdevinc/kudu/issues"
+    "url": "https://github.com/xdCloudy/kudu/issues"
   },
   "devDependencies": {
     "@axe-core/react": "^4.13.0",
