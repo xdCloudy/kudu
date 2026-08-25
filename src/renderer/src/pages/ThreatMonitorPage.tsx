@@ -156,15 +156,14 @@ function ConnectionRow({ conn }: { conn: FlaggedConnection }) {
     >
       <div className="min-w-0">
         <div className="truncate font-medium text-zinc-300">
-          {conn.processName || 'Unknown process'} → {conn.remoteAddress}:{conn.remotePort}
+          {conn.remoteAddress}:{conn.remotePort}
         </div>
         <div className="mt-1 truncate" style={{ color: 'var(--text-muted)' }}>
-          Matched {conn.matchedRule}
+          Matched {conn.matchedRule} · {conn.matchType.toUpperCase()}{conn.pid !== null ? ` · PID ${conn.pid}` : ''}
         </div>
       </div>
       <div className="text-right" style={{ color: 'var(--text-muted)' }}>
-        <div>{conn.protocol}</div>
-        <div className="mt-1">{formatTime(conn.detectedAt)}</div>
+        {formatTime(conn.detectedAt)}
       </div>
     </div>
   )
