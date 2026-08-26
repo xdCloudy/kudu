@@ -15,7 +15,7 @@ import { loadWindowState, trackWindowState, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT 
 import { startScheduler, stopScheduler, getNextScanTime, notifyScheduledScanComplete, completeScheduleRun } from './services/scheduler'
 import { initAutoUpdater } from './services/auto-updater'
 import { attachRendererDiagnostics } from './services/renderer-diagnostics'
-import { cloudAgent } from './services/cloud-agent'
+import { localCloud } from './services/local-cloud-service'
 import { shouldDisableGpu, applyGpuFallbackSwitches, registerGpuCrashRecovery } from './services/gpu-fallback'
 import { runCli } from './cli'
 import { runDaemon } from './daemon'
@@ -96,7 +96,7 @@ if (isRoot) {
 
 // ─── CLI / Daemon mode ───────────────────────────────────────
 // If --cli is passed, run headless and exit — no GUI, no tray.
-// If --daemon is passed, run headless cloud agent and stay alive.
+// If --daemon is passed, run the headless local security service and stay alive.
 if (process.argv.includes('--cli')) {
   app.whenReady().then(() => runCli())
 } else if (process.argv.includes('--daemon')) {
@@ -597,10 +597,11 @@ app.whenReady().then(() => {
   // Start the scheduled scan checker
   startScheduler(() => mainWindow)
 
-  // Start cloud agent if linked
-  if (settings.cloud.apiKey) {
-    cloudAgent.start()
-  }
+  // Start the local security service unconditionally. This fork never starts
+  // the hosted cloud agent, even if an old Kudu API key is still in settings.
+  void localCloud.start().catch((err) => {
+    console.error('Failed to start local security service:', err)
+  })
 
   // Listen for settings changes to update auto-launch and tray
   ipcMain.handle(IPC.SETTINGS_APPLY_STARTUP, async (_event, enabled: boolean) => {
@@ -672,7 +673,7 @@ app.on('before-quit-for-update', () => {
 app.on('before-quit', () => {
   isQuitting = true
   stopScheduler()
-  cloudAgent.stop()
+  localCloud.stop()
   // Kill any active child processes (reg.exe, cmd.exe, etc.) to prevent orphans
   killAllChildren()
 })
