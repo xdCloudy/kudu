@@ -42,10 +42,18 @@ if (process.argv.includes('--daemon') || process.argv.includes('--cli')) {
 }
 
 // ─── Data directory override ────────────────────────────────
+// Keep development isolated from an installed Kudu copy. Without this,
+// Chromium and the packaged app both use %APPDATA%/kudu and can contend for
+// GPUCache/Code Cache files, while dev settings can leak into production.
+// An explicit --kudu-data-dir still takes precedence for elevated relaunches.
+const dataDirFlag = process.argv.find(a => a.startsWith('--kudu-data-dir='))
+if (!app.isPackaged && !dataDirFlag) {
+  app.setPath('userData', join(app.getPath('appData'), 'Kudu-Dev'))
+}
+
 // When relaunched as root (macOS/Linux), the elevated process receives
 // --kudu-data-dir=<path> so it reads/writes the original user's config
 // instead of /var/root/... or /root/...
-const dataDirFlag = process.argv.find(a => a.startsWith('--kudu-data-dir='))
 if (dataDirFlag) {
   const dir = dataDirFlag.slice('--kudu-data-dir='.length)
   if (dir && require('path').isAbsolute(dir)) {
@@ -204,7 +212,7 @@ async function applyAutoLaunchWin32(enabled: boolean): Promise<void> {
     ].join('\r\n')
 
     // The XML lands in %LOCALAPPDATA%\Temp, which any process running as this
-    // user can write \u2014 including a non-elevated one. Since schtasks reads it
+    // user can write — including a non-elevated one. Since schtasks reads it
     // back elevated and the task carries RunLevel HighestAvailable, a swap
     // between our write and its read would register an attacker's command as a
     // logon-triggered admin task. A random name denies the attacker a path to
@@ -229,7 +237,7 @@ async function applyAutoLaunchWin32(enabled: boolean): Promise<void> {
 
     // Verify what was actually registered, not merely that something was.
     // If the definition isn't the one we submitted, the XML was tampered with
-    // in the window above \u2014 tear the task down rather than leave an elevated
+    // in the window above — tear the task down rather than leave an elevated
     // logon entry running something else.
     //
     // A query that fails or times out is also a failure to verify, and is
@@ -247,7 +255,7 @@ async function applyAutoLaunchWin32(enabled: boolean): Promise<void> {
       await execNativeUtf8('schtasks',[
         '/Delete', '/TN', TASK_NAME, '/F'
       ], { timeout: 10000 }).catch(() => {})
-      throw new Error('Startup task verification failed \u2014 the registered task did not match')
+      throw new Error('Startup task verification failed — the registered task did not match')
     }
   } else {
     try {
