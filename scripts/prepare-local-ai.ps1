@@ -16,28 +16,57 @@ $llamaRuntimeSha256 = '0E8B65E650E369F70F8307D890508886F171EF4FB00FACCCDDD4A1B7F
 
 New-Item -ItemType Directory -Force -Path $modelDir, $runtimeDir, $licenseDir | Out-Null
 
+# Use .NET directly instead of Get-FileHash. Some Windows environments still
+# resolve npm's `powershell` executable to a host where Get-FileHash is absent.
+# This works on both legacy Windows PowerShell and PowerShell 7.
+function Get-Sha256Hex([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $bytes = $sha.ComputeHash($stream)
+            return ([System.BitConverter]::ToString($bytes)).Replace('-', '').ToUpperInvariant()
+        } finally {
+            $sha.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
 function Test-ExpectedHash([string]$Path, [string]$Expected) {
     if (-not (Test-Path -LiteralPath $Path)) { return $false }
-    $actual = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToUpperInvariant()
+    $actual = Get-Sha256Hex $Path
     return $actual -eq $Expected.ToUpperInvariant()
 }
 
+$tmpModel = "$modelFile.download"
 if (-not (Test-ExpectedHash $modelFile $modelSha256)) {
-    if (Test-Path -LiteralPath $modelFile) {
-        Write-Host 'Existing MiniCPM model failed SHA256 verification; replacing it.'
-        Remove-Item -LiteralPath $modelFile -Force
-    }
-
-    Write-Host 'Downloading MiniCPM5-1B Q4_K_M (~688 MB)...'
-    $tmpModel = "$modelFile.download"
-    Remove-Item -LiteralPath $tmpModel -Force -ErrorAction SilentlyContinue
-    Invoke-WebRequest -Uri $modelUrl -OutFile $tmpModel -UseBasicParsing
-
-    if (-not (Test-ExpectedHash $tmpModel $modelSha256)) {
+    # A previous run may have completed the 688 MB download and then failed
+    # while hashing it. Reuse that verified .download file instead of fetching
+    # the whole model again.
+    if (Test-ExpectedHash $tmpModel $modelSha256) {
+        Write-Host 'Recovered previously downloaded MiniCPM model; checksum verified.'
+        if (Test-Path -LiteralPath $modelFile) {
+            Remove-Item -LiteralPath $modelFile -Force
+        }
+        Move-Item -LiteralPath $tmpModel -Destination $modelFile -Force
+    } else {
+        if (Test-Path -LiteralPath $modelFile) {
+            Write-Host 'Existing MiniCPM model failed SHA256 verification; replacing it.'
+            Remove-Item -LiteralPath $modelFile -Force
+        }
         Remove-Item -LiteralPath $tmpModel -Force -ErrorAction SilentlyContinue
-        throw 'MiniCPM model SHA256 verification failed.'
+
+        Write-Host 'Downloading MiniCPM5-1B Q4_K_M (~688 MB)...'
+        Invoke-WebRequest -Uri $modelUrl -OutFile $tmpModel -UseBasicParsing
+
+        if (-not (Test-ExpectedHash $tmpModel $modelSha256)) {
+            Remove-Item -LiteralPath $tmpModel -Force -ErrorAction SilentlyContinue
+            throw 'MiniCPM model SHA256 verification failed.'
+        }
+        Move-Item -LiteralPath $tmpModel -Destination $modelFile -Force
     }
-    Move-Item -LiteralPath $tmpModel -Destination $modelFile -Force
 } else {
     Write-Host 'MiniCPM model already present and verified.'
 }
