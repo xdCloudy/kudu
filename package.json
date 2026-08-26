@@ -7,8 +7,9 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
+    "prepare:local-ai": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-local-ai.ps1",
     "package": "electron-vite build && electron-builder",
-    "package:win": "electron-vite build && electron-builder --win",
+    "package:win": "npm run prepare:local-ai && electron-vite build && electron-builder --win",
     "package:mac": "electron-vite build && electron-builder --mac",
     "package:linux": "electron-vite build && electron-builder --linux",
     "package:all": "electron-vite build && electron-builder --win --mac --linux",
@@ -40,11 +41,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/adventdevinc/kudu.git"
+    "url": "https://github.com/xdCloudy/kudu.git"
   },
-  "homepage": "https://usekudu.com",
+  "homepage": "https://github.com/xdCloudy/kudu",
   "bugs": {
-    "url": "https://github.com/adventdevinc/kudu/issues"
+    "url": "https://github.com/xdCloudy/kudu/issues"
   },
   "devDependencies": {
     "@axe-core/react": "^4.13.0",
@@ -64,7 +65,7 @@
     "electron-vite": "^5.0.0",
     "patch-package": "^8.0.1",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8",
+    "react-dom": "^19.2.4",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3",
     "vite": "^7.3.6",

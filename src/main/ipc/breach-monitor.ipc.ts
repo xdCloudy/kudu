@@ -1,12 +1,12 @@
 import { ipcMain } from 'electron'
 import { IPC } from '../../shared/channels'
-import { cloudAgent } from '../services/cloud-agent'
+import { localCloud } from '../services/local-cloud-service'
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 export function registerBreachMonitorIpc(): void {
   ipcMain.handle(IPC.BREACH_MONITOR_FETCH, async () => {
-    return cloudAgent.getBreachMonitor()
+    return localCloud.getBreachMonitor()
   })
 
   ipcMain.handle(IPC.BREACH_MONITOR_ADD, async (_event, emails?: unknown) => {
@@ -20,14 +20,14 @@ export function registerBreachMonitorIpc(): void {
       }
       validated.push(e.toLowerCase().trim())
     }
-    return cloudAgent.addBreachMonitorEmails(validated)
+    return localCloud.addBreachMonitorEmails(validated)
   })
 
   ipcMain.handle(IPC.BREACH_MONITOR_REMOVE, async (_event, email?: unknown) => {
     if (typeof email !== 'string' || !EMAIL_RE.test(email) || email.length > 254) {
       throw new Error('Invalid email address')
     }
-    await cloudAgent.removeBreachMonitorEmail(email.toLowerCase().trim())
+    await localCloud.removeBreachMonitorEmail(email.toLowerCase().trim())
   })
 
   ipcMain.handle(IPC.BREACH_MONITOR_ACKNOWLEDGE, async (_event, breachIds?: unknown) => {
@@ -41,6 +41,6 @@ export function registerBreachMonitorIpc(): void {
       }
       validated.push(id)
     }
-    return cloudAgent.acknowledgeBreaches(validated)
+    return localCloud.acknowledgeBreaches(validated)
   })
 }

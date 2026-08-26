@@ -8,6 +8,18 @@ interface SettingsState {
   updateSettings: (partial: Partial<KuduSettings>) => void
 }
 
+// Several upstream pages use a truthy cloud.apiKey only as a feature gate for
+// safety ratings. Keep that compatibility signal inside the renderer without
+// ever persisting an API key to the main process or hosted Kudu Cloud.
+const LOCAL_SECURITY_MARKER = 'local-only'
+
+function withLocalSecurity(settings: KuduSettings): KuduSettings {
+  return {
+    ...settings,
+    cloud: { ...settings.cloud, apiKey: LOCAL_SECURITY_MARKER },
+  }
+}
+
 const defaultSettings: KuduSettings = {
   theme: 'system',
   language: 'en',
@@ -38,7 +50,7 @@ const defaultSettings: KuduSettings = {
   },
   schedules: [],
   cloud: {
-    apiKey: '',
+    apiKey: LOCAL_SECURITY_MARKER,
     telemetryIntervalSec: 60,
     shareDiskHealth: true,
     shareProcessList: true,
@@ -53,8 +65,7 @@ const defaultSettings: KuduSettings = {
   gameMode: {
     enabledOptimizations: [
       'svc-wsearch', 'svc-sysmain',
-      'proc-kill-updaters',
-      'mem-clear-standby',
+      'proc-kill-updaters', 'mem-clear-standby',
       'sys-focus-assist', 'sys-power-plan', 'sys-prevent-sleep',
       'sys-disable-game-bar', 'sys-disable-fse-opt',
       'net-flush-dns'
@@ -70,9 +81,14 @@ const defaultSettings: KuduSettings = {
 export const useSettingsStore = create<SettingsState>((set) => ({
   settings: defaultSettings,
   loaded: false,
-  setSettings: (settings) => set({ settings, loaded: true }),
+  // Hydrated settings come from the main process, where the real API key stays
+  // empty. Add the renderer-only compatibility marker at this boundary only.
+  setSettings: (settings) => set({ settings: withLocalSecurity(settings), loaded: true }),
   updateSettings: (partial) =>
     set((s) => ({
+      // Preserve the store's normal deep-merge contract. In particular, an
+      // explicit cloud.apiKey update must remain observable to callers/tests
+      // instead of being silently overwritten by the local-mode marker.
       settings: {
         ...s.settings,
         ...partial,
@@ -93,8 +109,8 @@ export function refreshSettings(): void {
   }).catch(() => {})
 }
 
-// Hydrate settings eagerly so pages that depend on them (e.g. ThreatMonitorPage)
-// don't see stale defaults before the user visits Settings.
+// Hydrate settings eagerly so pages that depend on them don't see stale defaults
+// before the user visits Settings.
 if (typeof window !== 'undefined' && window.kudu) {
   refreshSettings()
 }

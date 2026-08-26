@@ -15,22 +15,15 @@ export function cloudConnectionStateFromStatus(status: { status?: string; error?
 }
 
 /**
- * Tracks the live Cloud Agent connection instead of assuming a saved API key
- * means the agent is online. The short poll also lets an open tool recover as
- * soon as the background agent reconnects.
+ * Tracks the embedded local security service. The `enabled` argument is kept
+ * for renderer API compatibility with upstream pages, but local mode does not
+ * require an API key and therefore always queries the live service status.
  */
-export function useCloudConnection(enabled: boolean): CloudConnectionState {
-  const [state, setState] = useState<CloudConnectionState>(enabled ? 'checking' : 'disconnected')
+export function useCloudConnection(_enabled: boolean): CloudConnectionState {
+  const [state, setState] = useState<CloudConnectionState>('checking')
 
   useEffect(() => {
     let cancelled = false
-
-    if (!enabled) {
-      setState('disconnected')
-      return
-    }
-
-    setState('checking')
 
     const refresh = async () => {
       try {
@@ -48,7 +41,7 @@ export function useCloudConnection(enabled: boolean): CloudConnectionState {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [enabled])
+  }, [])
 
   return state
 }

@@ -22,6 +22,10 @@ extraResources:
     to: icons
     filter:
       - "**/*"
+  - from: resources/local-ai
+    to: local-ai
+    filter:
+      - "**/*"
 
 win:
   target:
@@ -88,4 +92,6 @@ deb:
 
 publish:
   provider: github
+  owner: xdCloudy
+  repo: kudu
   releaseType: release

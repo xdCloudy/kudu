@@ -10,3 +10,7 @@ cloud/
 CLOUD-COMMANDS.md
 manifests/
 resources/yara-rules/
+resources/local-ai/models/*.gguf
+resources/local-ai/runtime/*
+!resources/local-ai/models/.gitkeep
+!resources/local-ai/runtime/.gitkeep
